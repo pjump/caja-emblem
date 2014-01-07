@@ -1,0 +1,105 @@
+#!/usr/bin/env ruby
+
+require 'set'
+require 'optparse'
+
+ACTIONS = %w[add remove toggle show clear].sort!
+ACTIONS.extend OptionParser::Completion
+
+def usage
+  this=File.basename(__FILE__)
+return %Q{Emblem – a simple emblem administrator:
+
+Usage:
+    1) #{this} show|clear FILE(s)
+            show    – lists emblems associated with each file
+            clear   – delete all emblems associated with that file
+
+    2) #{this} add|remove|toggle tag1[,tag2,…] FILE(s)
+            add      – adds given tag(s) to each given file
+            remove   – remove given tag(s) from each given file
+            toggle   – toggle given tag(s) in each given file
+
+    3) #{this} -h|--help
+            show this help
+
+    EXAMPLES:
+        #{this} show README.md
+        #{this} clear README.md
+        #{this} add default README.md
+        #{this} toggle default,desktop,documents README.md
+        #{this} remove documents,foo README.md
+
+    Note: You have to refresh you're caja/nautilus after changing your emblems.
+
+    Tip: You don't have to type in the whole verb as long as you're unambiguous,
+         e.g., #{this} s == #{this} show
+}
+end
+
+def get_tags(file)
+  cmd="gvfs-info "+file + %q{ -a metadata::emblems|sed -n '2 {s:^.*\[:: ; s:\].*$::; s:,::g; p} '}
+  Set.new `#{cmd}`.split(' ')
+end
+
+def set_tags(file,tags)
+  if tags.empty?
+    clear(file)
+  else
+    cmd=%Q{gvfs-set-attribute "#{file}" -t stringv metadata::emblems #{tags.to_a.join(' ')}}
+    system(cmd)
+  end
+end
+
+def show(file)
+  puts "#{file}:"
+  tags=get_tags(file)
+  tags.each {|t| puts "\t#{t}"}
+end
+
+def clear(file)
+  cmd=%Q{gvfs-set-attribute "#{file}" -t stringv metadata::emblems ""}
+  system(cmd)
+end
+
+def tags_for_add(tags0,tags1)
+  tags0 + tags1
+end
+
+def tags_for_toggle(tags0,tags1)
+  (tags0+tags1) - tags0.intersection(tags1)
+end
+
+def tags_for_remove(tags0,tags1)
+  tags0 - tags1
+end
+
+#try to autocomplete the first arg if it doesn't start with '-'
+action=ARGV.shift 
+if (action && action[0]!='-')
+  (action=ACTIONS.complete(action)) && action=action[1]
+end
+
+case action
+when '-h','--help'
+  puts usage
+  exit 0
+when 'clear'
+  ARGV.each {|f| clear(f)}
+  exit $?.to_i #exit status of last child process
+when 'show'
+  ARGV.each {|f| show(f)}
+  exit $?.to_i #exit status of last child process
+when *ACTIONS
+  tags1=Set.new(ARGV.shift.split(','))  #argument tags
+  ARGV.each do |f|
+    tags0=get_tags(f)                  #tags already present on the file
+    tags2=self.send("tags_for_"+action,tags0,tags1)
+    set_tags(f,tags2)
+  end
+  exit $?.to_i #exit status of last child process
+else
+  $stderr.puts "Ilegal command\n" + usage
+  exit 1
+end
+__END__
